@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>B站视频解析下载</title>
+<style>
+:root{ --pink:#FB7299; --blue:#00AEEC; --bg:#0f0f13; --card:#1a1a21; --text:#f1f1f3; --muted:#9a9aa3; }
+*{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+body{ margin:0; background:var(--bg); color:var(--text); font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif; }
+.wrap{ max-width:640px; margin:0 auto; padding:20px 16px 60px; }
+header{ text-align:center; margin:26px 0 20px; }
+header h1{ font-size:26px; margin:0 0 8px; font-weight:800; letter-spacing:1px; }
+header h1 .bl{ color:var(--blue); }
+header h1 .pk{ color:var(--pink); }
+header p{ color:var(--muted); font-size:13px; margin:0; }
+.card{ background:var(--card); border-radius:16px; padding:18px 16px; margin-top:16px; box-shadow:0 4px 20px rgba(0,0,0,.35); }
+textarea{ width:100%; min-height:88px; background:#101016; border:1px solid #2c2c36; border-radius:12px; color:var(--text); font-size:14px; padding:12px; resize:vertical; outline:none; }
+textarea:focus{ border-color:var(--pink); }
+.btn{ display:block; width:100%; margin-top:12px; padding:14px; border:none; border-radius:12px; font-size:16px; font-weight:700; color:#fff; background:linear-gradient(135deg,var(--pink),var(--blue)); cursor:pointer; }
+.btn:disabled{ opacity:.55; }
+.hint{ font-size:12px; color:var(--muted); margin-top:10px; line-height:1.8; }
+#result{ display:none; }
+.title{ font-size:14px; line-height:1.6; margin:10px 0 12px; word-break:break-word; }
+.cover{ width:100%; border-radius:12px; margin-bottom:12px; }
+.res-list{ display:flex; flex-direction:column; gap:10px; margin-top:12px; }
+.res-item{ background:#101016; border:1px solid #2c2c36; border-radius:12px; padding:12px; }
+.res-item .rname{ font-size:14px; font-weight:600; margin-bottom:8px; }
+.res-item .rbtns{ display:flex; gap:8px; }
+.res-item .rbtns button{ flex:1; padding:10px; border:none; border-radius:10px; font-size:14px; font-weight:600; cursor:pointer; }
+.res-item .dl{ background:linear-gradient(135deg,var(--pink),var(--blue)); color:#fff; }
+.res-item .cp{ background:#2a2a34; color:var(--text); }
+.err{ display:none; background:rgba(254,44,85,.12); border:1px solid rgba(254,44,85,.4); color:#ff8ba0; font-size:13px; border-radius:12px; padding:12px; margin-top:14px; line-height:1.7; word-break:break-word; }
+.loading{ display:none; text-align:center; color:var(--muted); font-size:13px; margin-top:14px; }
+footer{ text-align:center; color:var(--muted); font-size:12px; margin-top:28px; line-height:1.8; }
+#toast{ display:none; position:fixed; left:50%; bottom:80px; transform:translateX(-50%); background:rgba(0,0,0,.85); color:#fff; font-size:13px; padding:10px 18px; border-radius:20px; z-index:99; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1><span class="bl">B站</span><span class="pk">视频</span>解析下载</h1>
+    <p>粘贴B站分享链接，一键保存无水印视频</p>
+  </header>
+
+  <div class="card">
+    <textarea id="urlInput" placeholder="粘贴B站视频链接，如：&#10;https://www.bilibili.com/video/BV1xx411c7mD&#10;https://b23.tv/xxxxx"></textarea>
+    <button class="btn" id="parseBtn">解析下载链接</button>
+    <div class="hint">支持 bilibili.com 视频链接 / b23.tv 短链<br>仅供个人学习交流，请勿用于商业用途</div>
+  </div>
+
+  <div class="loading" id="loading">解析中，请稍候…</div>
+  <div class="err" id="err"></div>
+
+  <div class="card" id="result">
+    <img class="cover" id="cover" style="display:none">
+    <div class="title" id="vtitle"></div>
+    <div class="res-list" id="resList"></div>
+  </div>
+
+  <footer>仅供个人学习交流，请勿用于商业用途</footer>
+</div>
+<div id="toast"></div>
+
+<script>
+var $ = function(id){ return document.getElementById(id); };
+function toast(msg){
+  var t = $('toast'); t.textContent = msg; t.style.display = 'block';
+  clearTimeout(t._t); t._t = setTimeout(function(){ t.style.display = 'none'; }, 2200);
+}
+function showErr(msg){
+  var e = $('err'); e.textContent = msg; e.style.display = 'block';
+  $('result').style.display = 'none';
+}
+function copyText(txt, btn){
+  function done(){ toast('已复制'); }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(txt).then(done).catch(function(){ fallback(); });
+  } else fallback();
+  function fallback(){
+    var ta = document.createElement('textarea');
+    ta.value = txt; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); done(); } catch(e){ toast('复制失败，请长按复制'); }
+    document.body.removeChild(ta);
+  }
+}
+// 通过后端代理下载（解决防盗链/CORS）
+function dlVia(url, filename){
+  var a = document.createElement('a');
+  a.href = '/api/dl?url=' + encodeURIComponent(url) + (filename ? '&filename=' + encodeURIComponent(filename) : '');
+  a.download = filename || 'bilibili_video.mp4';
+  document.body.appendChild(a); a.click();
+  setTimeout(function(){ document.body.removeChild(a); }, 500);
+}
+
+$('parseBtn').onclick = function(){
+  var text = $('urlInput').value.trim();
+  if (!text) { toast('请先粘贴B站链接'); return; }
+  var btn = $('parseBtn');
+  btn.disabled = true; btn.textContent = '解析中…';
+  $('loading').style.display = 'block';
+  $('err').style.display = 'none';
+  $('result').style.display = 'none';
+
+  fetch('/api/parse?url=' + encodeURIComponent(text))
+    .then(function(r){ return r.json(); })
+    .then(function(j){
+      btn.disabled = false; btn.textContent = '解析下载链接';
+      $('loading').style.display = 'none';
+      if (!j.ok) { showErr(j.error || '解析失败，请稍后重试'); return; }
+      // 显示结果
+      if (j.cover) { $('cover').src = j.cover; $('cover').style.display = 'block'; }
+      else $('cover').style.display = 'none';
+      $('vtitle').textContent = j.title || 'B站视频';
+      var list = $('resList'); list.innerHTML = '';
+      var resources = j.resources || [];
+      if (!resources.length) { showErr('未找到可下载的视频地址'); return; }
+      var safeTitle = (j.title || 'bilibili').replace(/[\\/:*?"<>|]/g, '_').slice(0, 40);
+      resources.forEach(function(res, idx){
+        var div = document.createElement('div');
+        div.className = 'res-item';
+        var fname = safeTitle + '_' + (res.label || ('清晰度' + (idx+1))) + '.mp4';
+        div.innerHTML = '<div class="rname">' + (res.label || '视频') + (res.size ? ' <span style="color:#9a9aa3;font-weight:400">(' + res.size + ')</span>' : '') + '</div>' +
+          '<div class="rbtns"><button class="dl">⬇ 下载</button><button class="cp">🔗 复制直链</button></div>';
+        var btns = div.querySelectorAll('button');
+        btns[0].onclick = function(){ dlVia(res.url, fname); };
+        btns[1].onclick = function(){ copyText(res.url); };
+        list.appendChild(div);
+      });
+      $('result').style.display = 'block';
+      $('result').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    })
+    .catch(function(){
+      btn.disabled = false; btn.textContent = '解析下载链接';
+      $('loading').style.display = 'none';
+      showErr('网络错误，请稍后重试');
+    });
+};
+</script>
+</body>
+</html>
