@@ -19,6 +19,10 @@ textarea{ width:100%; min-height:88px; background:#101016; border:1px solid #2c2
 textarea:focus{ border-color:var(--pink); }
 .btn{ display:block; width:100%; margin-top:12px; padding:14px; border:none; border-radius:12px; font-size:16px; font-weight:700; color:#fff; background:linear-gradient(135deg,var(--pink),var(--blue)); cursor:pointer; }
 .btn:disabled{ opacity:.55; }
+.btn-row{ display:flex; gap:10px; margin-top:12px; }
+.btn-row .btn{ margin-top:0; }
+.btn.paste{ background:#2a2a34; font-size:15px; }
+video#preview{ width:100%; max-height:50vh; border-radius:12px; background:#000; margin-bottom:4px; }
 .hint{ font-size:12px; color:var(--muted); margin-top:10px; line-height:1.8; }
 #result{ display:none; }
 .title{ font-size:14px; line-height:1.6; margin:10px 0 12px; word-break:break-word; }
@@ -45,7 +49,10 @@ footer{ text-align:center; color:var(--muted); font-size:12px; margin-top:28px; 
 
   <div class="card">
     <textarea id="urlInput" placeholder="粘贴B站视频链接，如：&#10;https://www.bilibili.com/video/BV1xx411c7mD&#10;https://b23.tv/xxxxx"></textarea>
-    <button class="btn" id="parseBtn">解析下载链接</button>
+    <div class="btn-row">
+      <button class="btn paste" id="pasteBtn" style="flex:0 0 110px">📋 粘贴</button>
+      <button class="btn" id="parseBtn" style="flex:1">解析下载链接</button>
+    </div>
     <div class="hint">支持 bilibili.com 视频链接 / b23.tv 短链<br>仅供个人学习交流，请勿用于商业用途</div>
   </div>
 
@@ -53,6 +60,7 @@ footer{ text-align:center; color:var(--muted); font-size:12px; margin-top:28px; 
   <div class="err" id="err"></div>
 
   <div class="card" id="result">
+    <video id="preview" controls playsinline preload="metadata" style="display:none"></video>
     <img class="cover" id="cover" style="display:none">
     <div class="title" id="vtitle"></div>
     <div class="res-list" id="resList"></div>
@@ -94,6 +102,16 @@ function dlVia(url, filename){
   setTimeout(function(){ document.body.removeChild(a); }, 500);
 }
 
+$('pasteBtn').onclick = function(){
+  function setText(t){
+    if (t) { $('urlInput').value = t.trim(); toast('已粘贴'); }
+    else toast('剪贴板是空的');
+  }
+  if (navigator.clipboard && navigator.clipboard.readText) {
+    navigator.clipboard.readText().then(setText).catch(function(){ toast('无法读取剪贴板，请手动粘贴'); });
+  } else toast('当前浏览器不支持，请手动粘贴');
+};
+
 $('parseBtn').onclick = function(){
   var text = $('urlInput').value.trim();
   if (!text) { toast('请先粘贴B站链接'); return; }
@@ -110,11 +128,19 @@ $('parseBtn').onclick = function(){
       $('loading').style.display = 'none';
       if (!j.ok) { showErr(j.error || '解析失败，请稍后重试'); return; }
       // 显示结果
-      if (j.cover) { $('cover').src = j.cover; $('cover').style.display = 'block'; }
-      else $('cover').style.display = 'none';
+      var resources = j.resources || [];
+      var pv = $('preview');
+      if (resources.length && resources[0].url) {
+        pv.src = '/api/dl?url=' + encodeURIComponent(resources[0].url);
+        pv.style.display = 'block';
+        $('cover').style.display = 'none';
+      } else {
+        pv.removeAttribute('src'); pv.style.display = 'none';
+        if (j.cover) { $('cover').src = j.cover; $('cover').style.display = 'block'; }
+        else $('cover').style.display = 'none';
+      }
       $('vtitle').textContent = j.title || 'B站视频';
       var list = $('resList'); list.innerHTML = '';
-      var resources = j.resources || [];
       if (!resources.length) { showErr('未找到可下载的视频地址'); return; }
       var safeTitle = (j.title || 'bilibili').replace(/[\\/:*?"<>|]/g, '_').slice(0, 40);
       resources.forEach(function(res, idx){
