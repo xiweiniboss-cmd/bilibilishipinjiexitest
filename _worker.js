@@ -510,6 +510,7 @@ const siteName = (p) => {
     if (h.includes('xiaohongshu')) return '小红书站';
     if (h.includes('douyin')) return '抖音站';
     if (h.includes('bilibili')) return 'B站站';
+    if (h.includes('DeepSeek')) return 'DeepSeek站';
     return h;
   } catch { return ''; }
 };
