@@ -292,7 +292,7 @@ async function handleYtDl(request) {
   const timer = setTimeout(() => ctrl.abort(), 120000);
   try {
     const resp = await fetch(mediaUrl, {
-      headers: { 'User-Agent': UA_PC, Accept: '*/*' },
+      headers: { 'User-Agent': UA_PC, Accept: '*/*', Referer: 'https://www.bilibili.com/' },
       signal: ctrl.signal,
     });
     if (!resp.ok || !resp.body)
