@@ -103,9 +103,9 @@ header.topbar{ display:flex; align-items:center; gap:12px; text-align:left; marg
 .step .d{ font-size:11px; color:var(--faint); margin-top:3px; line-height:1.5; }
 </style>
 <style>
-/* ===== 全屏品牌渐变背景（第三轮·纯粉渐变，无蓝色） ===== */
-html, body{ background:#D95780; }
-.bg{ background:linear-gradient(155deg, #FF9EBB 0%, #FB7299 48%, #E8437D 105%); }
+/* ===== 全屏品牌渐变背景（第三轮·粉白渐变：粉色渐变成白色） ===== */
+html, body{ background:#FFC9DA; }
+.bg{ background:linear-gradient(180deg, #FB7299 0%, #FF8FAB 34%, #FFC9DA 62%, #FFF0F5 82%, #FFFFFF 100%); }
 .orb{ background:radial-gradient(circle at 40% 40%, rgba(255,255,255,.55), rgba(255,255,255,0) 70%); opacity:.16; }
 .card{ background:rgba(13,13,20,.45); }
 .step{ background:rgba(13,13,20,.30); }
@@ -118,6 +118,12 @@ footer{ text-shadow:0 1px 8px rgba(0,0,0,.30); }
 <style>
 /* ===== 背景层级修正（第四轮）：body 改透明，品牌渐变层真正显示 ===== */
 body{ background:transparent; }
+</style>
+<style>
+/* ===== 粉白渐变可读性修正（第五轮）：浅底区域文字改深粉 ===== */
+footer{ color:rgba(150,45,80,.55); text-shadow:none; }
+.hero .hero-count{ color:rgba(133,25,60,.55); text-shadow:none; }
+.hero .hero-count b{ color:#C2185B; }
 </style>
 </head>
 <body>
