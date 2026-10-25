@@ -175,7 +175,8 @@ footer{ color:rgba(150,45,80,.55); text-shadow:none; }
       <div class="track"><div class="bar" id="dlProgBar"></div></div>
       <div class="txt" id="dlProgTxt">准备下载…</div>
     </div>
-    <div class="hint" id="dlHint" style="display:none">iPhone 会弹出分享菜单，点「存储视频」即可保存到相册<br>💡 直链有时效，解析完尽快下载</div>
+    <button class="btn" id="saveBtn" style="display:none" onclick="window.__saveFile()">✅ 下载完成，点这里保存</button>
+    <div class="hint" id="dlHint" style="display:none">iPhone 会弹出分享菜单，点「存储视频」即可保存到相册；没弹出就点绿色的「点这里保存」<br>💡 直链有时效，解析完尽快下载</div>
   </div>
 
   <footer>解析仅供个人学习交流<br>请勿传播他人原创作品</footer>
@@ -302,24 +303,57 @@ var deviceId = (function(){
   }
   function hideDlProg(){ document.getElementById('dlProg').style.display = 'none'; }
 
+  // 下载完成后保存：iPhone 的分享菜单必须由“点击”直接触发，下载几十秒后再自动调用会被系统静默拒绝，
+  // 所以自动尝试一次，失败就亮出「保存」按钮让用户再点一下（这次是新的点击，一定能弹出）。
+  var _pendingFile = null;
+  function mimeFor(name, t){
+    if (/\.m4a$/i.test(name)) return 'audio/mp4';
+    if (/\.mp4$/i.test(name)) return 'video/mp4';
+    return (t && t !== 'application/octet-stream') ? t : 'video/mp4';
+  }
+  function saveViaLink(file){
+    var objUrl = URL.createObjectURL(file);
+    var a = document.createElement('a');
+    a.href = objUrl; a.download = file.name;
+    document.body.appendChild(a); a.click();
+    setTimeout(function(){ document.body.removeChild(a); URL.revokeObjectURL(objUrl); }, 60000);
+  }
+  function canShareFile(file){
+    try { return !!(navigator.share && navigator.canShare && navigator.canShare({ files: [file] })); } catch(e){ return false; }
+  }
+  function showSaveBtn(file){
+    _pendingFile = file;
+    var btn = $('saveBtn');
+    btn.textContent = '✅ 下载完成，点这里保存（' + fmtMB(file.size) + '）';
+    btn.style.display = 'block';
+    btn.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+  window.__saveFile = function(){ if (_pendingFile) saveFile(_pendingFile, true); };
+  function hideSaveBtn(){ _pendingFile = null; var b = $('saveBtn'); if (b) b.style.display = 'none'; }
+  function saveFile(file, fromTap){
+    if (canShareFile(file)) {
+      return navigator.share({ files: [file], title: file.name }).then(hideSaveBtn).catch(function(e){
+        if (e && e.name === 'AbortError') { if (!fromTap) showSaveBtn(file); return; } // 用户自己取消，按钮留着可以再点
+        if (fromTap) { saveViaLink(file); hideSaveBtn(); }
+        else showSaveBtn(file); // 多半是点击时效过了，让用户再点一次
+      });
+    }
+    saveViaLink(file);
+    if (fromTap) hideSaveBtn(); else showSaveBtn(file); // 电脑上直接下载；按钮留作“没反应再点一次”
+  }
+
   function downloadResource(url, filename){
+    hideError(); hideSaveBtn();
     setParseBtn('正在准备下载…', true);
     resetDlProg();
     var proxyUrl = '/api/ytdl?url=' + encodeURIComponent(url) + '&filename=' + encodeURIComponent(filename);
     fetchBlobProgress(proxyUrl, setDlProg).then(function(blob){
       hideDlProg();
-      var file = new File([blob], filename, { type: blob.type || 'video/mp4' });
-      if (navigator.canShare && navigator.canShare({ files: [file] })) {
-        resetParseBtn();
-        return navigator.share({ files: [file], title: filename }).catch(function(){});
-      }
-      var objUrl = URL.createObjectURL(blob);
-      var a = document.createElement('a');
-      a.href = objUrl; a.download = filename;
-      document.body.appendChild(a); a.click();
-      setTimeout(function(){ document.body.removeChild(a); URL.revokeObjectURL(objUrl); }, 4000);
       resetParseBtn();
-      hideDlProg();
+      if (!blob || blob.size < 1024) throw new Error('文件为空或已失效，请重新解析');
+      if (/json|html/i.test(blob.type || '')) throw new Error('服务器返回的不是视频，请重新解析');
+      var file = new File([blob], filename, { type: mimeFor(filename, blob.type) });
+      saveFile(file, false);
     }).catch(function(e){
       resetParseBtn();
       hideDlProg();
