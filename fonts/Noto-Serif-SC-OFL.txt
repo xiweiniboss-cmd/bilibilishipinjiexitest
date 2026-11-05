@@ -1,0 +1,7 @@
+Copyright 2014-2021 Adobe, with Reserved Font Name 'Source'.
+Noto Serif CJK SC Medium. This package includes a subset of the ten
+characters in the headline 保存无水印的B站视频, and nothing else.
+
+This Font Software is licensed under the SIL Open Font License, Version 1.1.
+The full license text is in OFL.txt in this directory.
+https://scripts.sil.org/OFL
