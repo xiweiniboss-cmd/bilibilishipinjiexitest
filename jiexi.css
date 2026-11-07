@@ -8,7 +8,7 @@
    抖音   --jx-accent #d3123a   --jx-accent-hover #e21842   --jx-accent-text #ff9aab
    快手   #c2410c               #ea580c                     #fdba74
    小红书 #be123c               #e11d48                     #fda4af
-   B站    #0369a1               #0278b4                     #7dd3fc
+   B站    #d42a78               #db2777                     #fb7299
    微博   #be123c               #e11d48                     #fda4af
    YouTube #b91c1c              #dc2626                     #fca5a5
    TikTok 与抖音同一套红，不要红青渐变
@@ -16,9 +16,8 @@
    白字叠在 --jx-accent 上需要至少 4.5:1。上面抖音这组已核过：
    白 / #d3123a = 5.36，白 / #e21842 = 4.73，#ff9aab / #141415 = 9.17。
    换站时用同样的方法核一次再上线。
-   B站这组：白 / #0369a1 = 5.93，白 / #0278b4 = 4.83，#7dd3fc / #141415 = 11.04。
-   文件头原来的悬停色 #0284c7 与白字是 4.10，低于 4.5，所以加深到 #0278b4。
-   主色和强调文字色仍是文件头那两个。
+   B站这组：白 / #d42a78 = 4.77，白 / #db2777 = 4.60，#fb7299 / #141415 = 6.99。
+   主色用深粉，白字才过 4.5:1。浅粉 #fb7299 只放在深底上当文字。
 
    签名：四角裁切线。只用在标志和成片画框上，表示这一帧没有水印。
    竖幅胶片是抖音这一页的画面，别的站可以换自己的画面，chrome 留着。
@@ -67,10 +66,10 @@
   --jx-hairline: rgba(237, 237, 237, 0.08);
   --jx-hairline-strong: rgba(237, 237, 237, 0.12);
 
-  /* 每站只改这三行。B站悬停色见文件头，已按 4.5:1 加深。 */
-  --jx-accent: #0369a1;
-  --jx-accent-hover: #0278b4;
-  --jx-accent-text: #7dd3fc;
+  /* 每站只改这三行。B站是深粉，浅粉只做深底文字。 */
+  --jx-accent: #d42a78;
+  --jx-accent-hover: #db2777;
+  --jx-accent-text: #fb7299;
   --jx-on-accent: #ffffff;
 
   --jx-positive: #4cc38a;
@@ -898,11 +897,11 @@ footer a:hover { color: var(--jx-secondary); }
   width: auto;
   height: 40px;
   padding: 0 14px 0 6px;
-  border: 1px solid var(--jx-hairline-strong);
+  border: 1px solid transparent;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--jx-surface) 78%, transparent);
-  color: var(--jx-text);
-  box-shadow: var(--jx-shadow-float), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  background: var(--jx-accent);
+  color: var(--jx-on-accent);
+  box-shadow: var(--jx-shadow-float), inset 0 1px 0 rgba(255, 255, 255, 0.22);
   backdrop-filter: blur(16px) saturate(1.2);
   -webkit-backdrop-filter: blur(16px) saturate(1.2);
   font-size: 13px;
@@ -918,15 +917,15 @@ footer a:hover { color: var(--jx-secondary); }
 }
 
 #fbBtn:hover {
-  background: var(--jx-raised);
-  border-color: color-mix(in srgb, var(--jx-accent) 55%, var(--jx-hairline-strong));
-  color: var(--jx-text);
+  background: var(--jx-accent-hover);
+  border-color: transparent;
+  color: var(--jx-on-accent);
 }
 
 #fbBtn:active { transform: scale(0.97); }
 
 #fbBtn:focus-visible {
-  outline: 2px solid var(--jx-accent);
+  outline: 2px solid var(--jx-accent-text);
   outline-offset: 3px;
 }
 
@@ -937,9 +936,9 @@ footer a:hover { color: var(--jx-secondary); }
   display: grid;
   place-items: center;
   flex: none;
-  background: var(--jx-accent);
-  color: var(--jx-on-accent);
-  box-shadow: var(--jx-highlight);
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+  box-shadow: none;
   pointer-events: none;
 }
 
