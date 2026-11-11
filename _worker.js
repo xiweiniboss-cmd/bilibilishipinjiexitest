@@ -125,7 +125,7 @@ function extractResources(data) {
 async function parseBilibiliViaRedFox(shareText, apiKey, debug) {
   const rawUrl = extractBilibiliUrl(shareText);
   if (!rawUrl) throw new Error('没找到有效的链接，请粘贴 B站 分享链接');
-  if (!/bilibili\.com|b23\.tv|BV[a-zA-Z0-9]{10}/i.test(rawUrl)) throw new Error('这不是 B站 链接，请检查后重试');
+  if (!isBilibiliUrl(rawUrl)) throw new Error('这不是 B站 链接，请检查后重试');
 
   const routes = [{ name: 'raw', url: rawUrl }];
   const dbg = debug ? { routes: [] } : null;
@@ -164,7 +164,28 @@ async function parseBilibiliViaRedFox(shareText, apiKey, debug) {
 
 function extractBilibiliUrl(text) {
   const m = text.match(/https?:\/\/[^\s"'<>]+/);
-  return m ? m[0] : null;
+  return m ? m[0].replace(/[.,;!?\]]+$/, '') : null;
+}
+
+// 域名判断：host 等于某个域名，或以「.域名」结尾
+function hostMatches(host, list) {
+  host = String(host || '').toLowerCase().replace(/\.$/, '');
+  return list.some((d) => host === d || host.endsWith('.' + d));
+}
+const BILI_PAGE_HOSTS = ['bilibili.com', 'b23.tv', 'bili2233.cn'];
+const BILI_MEDIA_HOSTS = ['bilivideo.com', 'bilivideo.cn', 'hdslb.com', 'bilibili.com'];
+// B站 海外镜像走 Akamai，域名形如 upos-hz-mirrorakam.akamaized.net：只放行 upos-* 开头的，不再整段放行 akamaized.net
+function isBiliMediaHost(host) {
+  host = String(host || '').toLowerCase();
+  return hostMatches(host, BILI_MEDIA_HOSTS) || /^upos-[a-z0-9-]+\.akamaized\.net$/.test(host);
+}
+function isBilibiliUrl(u) {
+  try {
+    const x = new URL(u);
+    return (x.protocol === 'https:' || x.protocol === 'http:') && hostMatches(x.hostname, BILI_PAGE_HOSTS);
+  } catch {
+    return false;
+  }
 }
 
 // ---------- 解析 ----------
@@ -182,7 +203,11 @@ async function handleParse(request, env) {
   const reqUrl = new URL(request.url);
   const shareText = reqUrl.searchParams.get('url') || '';
   if (!shareText.trim()) return json({ ok: false, error: '请先粘贴 B站 分享链接' }, 400);
-  const debug = reqUrl.searchParams.get('debug') === '1';
+  // 文案里有链接但不是本站支持的域名：直接拒绝，不调用计费接口（按解析后的 hostname 判断）
+  const firstLink = (String(shareText).match(/https?:\/\/[^\s"'<>]+/) || [])[0] || '';
+  if (firstLink && !isBilibiliUrl(firstLink)) return json({ ok: false, error: '只支持 B站 链接（bilibili.com / b23.tv）' }, 400);
+  // debug 输出上游数据结构，只给带管理口令的请求
+  const debug = reqUrl.searchParams.get('debug') === '1' && checkAdminKey(reqUrl, env);
 
   // 解析接口人机验证（配了 TURNSTILE_SECRET_KEY 才生效）
   const tsSecret = (env.TURNSTILE_SECRET_KEY || '').trim();
@@ -197,7 +222,7 @@ async function handleParse(request, env) {
   const PARSE_COOLDOWN_SECS = 60;
   const parseIp = request.headers.get('cf-connecting-ip') || '';
   if (parseIp && env.FEEDBACK_KV) {
-    const lastTs = await env.FEEDBACK_KV.get('pcool_' + parseIp);
+    const lastTs = await env.FEEDBACK_KV.get('pcool_bilibili_' + parseIp);
     if (lastTs) {
       const remain = PARSE_COOLDOWN_SECS - Math.floor((Date.now() - Number(lastTs)) / 1000);
       if (remain > 0) return json({ ok: false, error: `解析太频繁，请 ${remain} 秒后再试` }, 429);
@@ -210,7 +235,7 @@ async function handleParse(request, env) {
   const parseUrl = new URL(request.url);
   const deviceId = parseUrl.searchParams.get('deviceId') || '';
   const quotaId = deviceId || parseIp;
-  const quotaKey = 'dlimit_' + quotaId + '_' + bjDate;
+  const quotaKey = 'dlimit_bilibili_' + quotaId + '_' + bjDate;
   let usedToday = 0;
   if (parseIp && env.FEEDBACK_KV) {
     try { usedToday = Number((await env.FEEDBACK_KV.get(quotaKey)) || 0); } catch {}
@@ -221,7 +246,7 @@ async function handleParse(request, env) {
   try {
     const result = await parseBilibiliViaRedFox(shareText, apiKey, debug);
     if (parseIp && env.FEEDBACK_KV)
-      await env.FEEDBACK_KV.put('pcool_' + parseIp, String(Date.now()), {
+      await env.FEEDBACK_KV.put('pcool_bilibili_' + parseIp, String(Date.now()), {
         expirationTtl: PARSE_COOLDOWN_SECS,
       });
     // 本站解析次数统计（仅成功计数）
@@ -284,9 +309,8 @@ async function handleYtDl(request) {
   try { target = new URL(mediaUrl); } catch {
     return json({ ok: false, error: '无效的下载地址' }, 400);
   }
-  // 仅允许 googlevideo / bilibili 媒体域名
-  const allowed = /(^|\.)googlevideo\.com$|(^|\.)bilibili\.com$|(^|\.)bilivideo\.com$|(^|\.)bilivideo\.cn$|(^|\.)hdslb\.com$|(^|\.)akamaized\.net$|(^|\.)youtu\.be$|(^|\.)ytimg\.com$/i;
-  if (!/^https:$/.test(target.protocol) || !allowed.test(target.hostname))
+  // 仅允许 B站 自家媒体域名（精确后缀匹配；去掉了从 YouTube 站带过来的 googlevideo / akamaized / ytimg / youtu.be）
+  if (!/^https:$/.test(target.protocol) || !isBiliMediaHost(target.hostname))
     return json({ ok: false, error: '不支持的下载地址' }, 400);
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 120000);
@@ -359,7 +383,7 @@ async function handleFeedbackSubmit(request, env) {
   const COOLDOWN_SECS = 600;
   const clientIp = request.headers.get('cf-connecting-ip') || '';
   if (clientIp) {
-    const lastTs = await env.FEEDBACK_KV.get('cool_' + clientIp);
+    const lastTs = await env.FEEDBACK_KV.get('cool_bilibili_' + clientIp);
     if (lastTs) {
       const remain = COOLDOWN_SECS - Math.floor((Date.now() - Number(lastTs)) / 1000);
       if (remain > 0)
@@ -408,7 +432,7 @@ async function handleFeedbackSubmit(request, env) {
   };
   await env.FEEDBACK_KV.put(id, JSON.stringify(record));
   if (clientIp)
-    await env.FEEDBACK_KV.put('cool_' + clientIp, String(Date.now()), {
+    await env.FEEDBACK_KV.put('cool_bilibili_' + clientIp, String(Date.now()), {
       expirationTtl: COOLDOWN_SECS,
     });
   return json({ ok: true });
@@ -423,13 +447,23 @@ async function handleFeedbackList(request, env) {
   const url = new URL(request.url);
   if (!checkAdminKey(url, env)) return json({ ok: false, error: '无权访问' }, 403);
   if (!env.FEEDBACK_KV) return json({ ok: false, error: '未绑定 KV' }, 500);
-  const listed = await env.FEEDBACK_KV.list({ prefix: 'fb_' });
   const items = [];
-  for (const k of listed.keys) {
-    try {
-      const v = await env.FEEDBACK_KV.get(k.name);
-      if (v) items.push(JSON.parse(v));
-    } catch {}
+  for (const prefix of ['fb_', 'feedback_']) {
+    const listed = await env.FEEDBACK_KV.list({ prefix });
+    for (const k of listed.keys) {
+      try {
+        const v = await env.FEEDBACK_KV.get(k.name);
+        if (!v) continue;
+        const it = JSON.parse(v);
+        // 快手站旧版记录：key 是 feedback_<id>，时间字段叫 ts，没有 page
+        if (prefix === 'feedback_') {
+          if (!it.time && it.ts) it.time = new Date(Number(it.ts)).toISOString();
+          if (!it.page || !/^https?:/.test(String(it.page))) it.page = 'https://kuaishoujiexi.pages.dev/';
+          it.id = String(it.id || k.name.slice('feedback_'.length));
+        }
+        items.push(it);
+      } catch {}
+    }
   }
   items.sort((a, b) => String(b.time || '').localeCompare(String(a.time || '')));
   return json({ ok: true, count: items.length, items });
@@ -442,7 +476,7 @@ async function handleFeedbackDelete(request, env) {
   const id = url.searchParams.get('id') || '';
   if (!/^fb_[a-z0-9_]+$/i.test(id)) return json({ ok: false, error: '参数错误' }, 400);
   try {
-    const v = await env.FEEDBACK_KV.get(id);
+    const v = (await env.FEEDBACK_KV.get(id)) || (await env.FEEDBACK_KV.get('feedback_' + id));
     if (v) {
       const rec = JSON.parse(v);
       if (env.FEEDBACK_BUCKET && Array.isArray(rec.attachments)) {
@@ -455,6 +489,7 @@ async function handleFeedbackDelete(request, env) {
     }
   } catch {}
   await env.FEEDBACK_KV.delete(id);
+  await env.FEEDBACK_KV.delete('feedback_' + id); // 快手旧版记录
   return json({ ok: true });
 }
 
@@ -510,6 +545,8 @@ const siteName = (p) => {
     if (h.includes('xiaohongshu')) return '小红书站';
     if (h.includes('douyin')) return '抖音站';
     if (h.includes('bilibili')) return 'B站站';
+    if (h.includes('kuaishou')) return '快手站';
+    if (h.includes('weibo')) return '微博站';
     if (h.includes('DeepSeek')) return 'DeepSeek站';
     return h;
   } catch { return ''; }
@@ -605,7 +642,7 @@ h2{font-size:16px;margin:24px 0 12px;color:#f1f1f3}
 </style></head>
 <body><div class="wrap">
 <h1>📊 数据总览 <span id="time"></span></h1>
-<div class="sub">五站解析次数统计（仅成功计数）</div>
+<div class="sub">各站解析次数统计（仅成功计数）</div>
 <div class="grid" id="grid"><div class="err">加载中…</div></div>
 <div class="total" id="total" style="display:none"><div class="num" id="totalNum">0</div><div class="label">累计解析</div></div>
 
@@ -633,7 +670,7 @@ h2{font-size:16px;margin:24px 0 12px;color:#f1f1f3}
 </div><script>
 const key = new URLSearchParams(location.search).get('key') || '';
 document.getElementById('adminLink').href = '/admin?key=' + encodeURIComponent(key);
-const COLORS = ['#FE2C55','#25F4EE','#FFC107','#9C27B0'];
+const COLORS = ['#FE2C55','#25F4EE','#FFC107','#9C27B0','#FF7A1A','#4CAF50'];
 const COUNTRY_ZH = {CN:'中国',US:'美国',JP:'日本',KR:'韩国',HK:'香港',TW:'台湾',MO:'澳门',SG:'新加坡',GB:'英国',DE:'德国',FR:'法国',IT:'意大利',ES:'西班牙',CA:'加拿大',AU:'澳大利亚',NZ:'新西兰',RU:'俄罗斯',IN:'印度',BR:'巴西',MX:'墨西哥',TH:'泰国',MY:'马来西亚',ID:'印度尼西亚',PH:'菲律宾',VN:'越南',TR:'土耳其',AE:'阿联酋',XX:'未知'};
 async function load(){
   const grid = document.getElementById('grid');
@@ -759,7 +796,7 @@ load();
 async function handleParseHistory(request, env) {
   const url = new URL(request.url);
   if (!checkAdminKey(url, env)) return json({ ok: false, error: '无权访问' }, 403);
-  const siteNames = { tiktok: 'TikTok站', xhs: '小红书站', douyin: '抖音站', tiktok: 'TikTok站', xhs: '小红书站', douyin: '抖音站', youtube: 'YouTube站', bilibili: 'B站站' };
+  const siteNames = { tiktok: 'TikTok站', xhs: '小红书站', douyin: '抖音站', youtube: 'YouTube站', bilibili: 'B站站', kuaishou: '快手站' };
   const all = [];
   if (env.FEEDBACK_KV) {
     for (const site of Object.keys(siteNames)) {
@@ -779,12 +816,12 @@ async function handleGeoStats(request, env) {
   const url = new URL(request.url);
   if (!checkAdminKey(url, env)) return json({ ok: false, error: '无权访问' }, 403);
   const byCountry = {};
-  const bySite = { tiktok: {}, xhs: {}, douyin: {}, youtube: {}, bilibili: {} };
+  const bySite = { tiktok: {}, xhs: {}, douyin: {}, youtube: {}, bilibili: {}, kuaishou: {} };
   if (env.FEEDBACK_KV) {
     try {
       const listed = await env.FEEDBACK_KV.list({ prefix: 'geoparse_' });
       for (const k of listed.keys) {
-        const m = k.name.match(/^geoparse_(tiktok|xhs|douyin|youtube|bilibili)_([A-Z]{2})$/);
+        const m = k.name.match(/^geoparse_(tiktok|xhs|douyin|youtube|bilibili|kuaishou)_([A-Z]{2})$/);
         if (!m) continue;
         const n = Number((await env.FEEDBACK_KV.get(k.name)) || 0);
         if (!n) continue;
@@ -808,7 +845,7 @@ async function handleParseQuota(request, env) {
   const bjDate = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
   let used = 0;
   if (quotaId && env.FEEDBACK_KV) {
-    try { used = Number((await env.FEEDBACK_KV.get('dlimit_' + quotaId + '_' + bjDate)) || 0); } catch {}
+    try { used = Number((await env.FEEDBACK_KV.get('dlimit_bilibili_' + quotaId + '_' + bjDate)) || 0); } catch {}
   }
   return json({ ok: true, limit: DAILY_LIMIT, used, remaining: Math.max(0, DAILY_LIMIT - used) });
 }
@@ -826,6 +863,7 @@ async function handleStatsAll(request, env) {
     { key: 'stats_parse_douyin', name: '抖音站' },
     { key: 'stats_parse_youtube', name: 'YouTube站' },
     { key: 'stats_parse_bilibili', name: 'B站站' },
+    { key: 'stats_parse_kuaishou', name: '快手站' },
   ];
   const result = [];
   for (const s of sites) {
@@ -859,13 +897,12 @@ export default {
 
     // 本站解析次数
     if (url.pathname === '/api/stats') {
-      let n = 0;
-      if (env.FEEDBACK_KV) {
-        try {
-          n = Number((await env.FEEDBACK_KV.get('stats_parse_bilibili')) || 0);
-        } catch {}
-      }
-      return json({ ok: true, parseCount: n });
+      if (!env.FEEDBACK_KV) return json({ ok: true, bound: false, parseCount: null, error: '未绑定 KV' });
+      let n = null;
+      try {
+        n = Number((await env.FEEDBACK_KV.get('stats_parse_bilibili')) || 0);
+      } catch {}
+      return json({ ok: true, bound: true, parseCount: n });
     }
 
     if (url.pathname === '/api/feedback') {
