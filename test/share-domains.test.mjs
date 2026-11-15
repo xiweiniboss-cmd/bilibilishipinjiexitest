@@ -60,3 +60,9 @@ for (const link of [
     assert.equal(r.calls.length, 0, '不该调上游：' + r.calls.join(','));
   });
 }
+
+test('拒绝时的提示写出新的短链域名', async () => {
+  const r = await parse('https://bili24.cn/x');
+  const j = JSON.parse(r.body);
+  for (const d of ['bilibili.com', 'b23.tv', 'bili2233.cn', 'bili22.cn', 'bili23.cn', 'bili33.cn']) assert.ok(j.error.includes(d), d + ' 不在提示里：' + j.error);
+});

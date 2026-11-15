@@ -413,7 +413,7 @@ async function handleParse(request, env) {
   if (!shareText.trim()) return json({ ok: false, error: '请先粘贴 B站 分享链接' }, 400);
   // 文案里有链接但不是本站支持的域名：直接拒绝，不调用计费接口（按解析后的 hostname 判断）
   const firstLink = (String(shareText).match(/https?:\/\/[^\s"'<>]+/) || [])[0] || '';
-  if (firstLink && !isBilibiliUrl(firstLink)) return json({ ok: false, error: '只支持 B站 链接（bilibili.com / b23.tv）' }, 400);
+  if (firstLink && !isBilibiliUrl(firstLink)) return json({ ok: false, error: '只支持 B站 链接（bilibili.com / b23.tv / bili2233.cn / bili22.cn / bili23.cn / bili33.cn）' }, 400);
   // debug 输出上游数据结构，只给带管理口令的请求
   const debug = reqUrl.searchParams.get('debug') === '1' && (await isAdmin(request, env));
 
