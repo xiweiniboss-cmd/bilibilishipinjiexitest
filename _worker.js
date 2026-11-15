@@ -379,7 +379,8 @@ function hostMatches(host, list) {
   host = String(host || '').toLowerCase().replace(/\.$/, '');
   return list.some((d) => host === d || host.endsWith('.' + d));
 }
-const BILI_PAGE_HOSTS = ['bilibili.com', 'b23.tv', 'bili2233.cn'];
+// 页面/短链域名（识别输入用，不用于下载代理）。bili22/23/33/2233.cn 都是 B站 官方短链备用域名，和 b23.tv 一样 302 到 bilibili.com
+const BILI_PAGE_HOSTS = ['bilibili.com', 'b23.tv', 'bili2233.cn', 'bili22.cn', 'bili23.cn', 'bili33.cn'];
 const BILI_MEDIA_HOSTS = ['bilivideo.com', 'bilivideo.cn', 'hdslb.com', 'bilibili.com'];
 // B站 海外镜像走 Akamai，域名形如 upos-hz-mirrorakam.akamaized.net：只放行 upos-* 开头的，不再整段放行 akamaized.net
 function isBiliMediaHost(host) {
