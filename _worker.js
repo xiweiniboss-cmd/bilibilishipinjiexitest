@@ -549,7 +549,7 @@ async function handleParse(request, env) {
 
 // ---------- B站 直链下载代理 ----------
 // googlevideo 不发送 CORS 头，手机端 fetch 会被拦；由 Worker 中转后加 CORS 头返回
-async function handleYtDl(request) {
+async function handleYtDl(request, preview = false) {
   const u = new URL(request.url);
   const mediaUrl = u.searchParams.get('url') || '';
   const filename = (u.searchParams.get('filename') || 'bilibili_video.mp4').replace(/["\r\n]/g, '').slice(0, 80) || 'bilibili_video.mp4';
@@ -564,8 +564,9 @@ async function handleYtDl(request) {
   const timer = setTimeout(() => ctrl.abort(), 120000);
   try {
     // 手动跟随跳转，每一跳都重新校验 https + 域名白名单
+    const range = preview && request.headers.get('Range');
     const resp = await fetchAllowedHops(mediaUrl, {
-      headers: { 'User-Agent': UA_PC, Accept: '*/*', Referer: 'https://www.bilibili.com/' },
+      headers: { 'User-Agent': UA_PC, Accept: '*/*', Referer: 'https://www.bilibili.com/', ...(range ? { Range: range } : {}) },
       signal: ctrl.signal,
     }, isBiliMediaHost);
     if (!resp) return json({ ok: false, error: '不支持的下载地址' }, 400);
@@ -575,9 +576,16 @@ async function handleYtDl(request) {
     h.set('Content-Type', resp.headers.get('content-type') || 'application/octet-stream');
     const len = resp.headers.get('content-length');
     if (len) h.set('Content-Length', len);
-    h.set('Content-Disposition', 'attachment; filename="' + filename + '"');
+    if (preview) {
+      for (const name of ['Accept-Ranges', 'Content-Range']) {
+        const value = resp.headers.get(name);
+        if (value) h.set(name, value);
+      }
+    } else {
+      h.set('Content-Disposition', 'attachment; filename="' + filename + '"');
+    }
     h.set('Cache-Control', 'no-store');
-    return new Response(resp.body, { status: 200, headers: h });
+    return new Response(resp.body, { status: preview ? resp.status : 200, headers: h });
   } catch (e) {
     return json({ ok: false, error: '下载失败：' + (e.message || '网络错误') }, 502);
   } finally {
@@ -1491,6 +1499,7 @@ const app = {
 
     if (url.pathname === '/api/parse') return pl.wrap(request, env, ctx, () => handleParse(request, env));
     if (url.pathname === '/api/ytdl') return pl.guard(request, env, ctx, () => handleYtDl(request));
+    if (url.pathname === '/api/dl') return pl.guard(request, env, ctx, () => handleYtDl(request, true));
 
     if (url.pathname === '/api/diag')
       return json({
