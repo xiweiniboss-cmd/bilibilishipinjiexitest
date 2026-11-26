@@ -549,7 +549,20 @@ async function handleParse(request, env) {
 
 // ---------- B站 直链下载代理 ----------
 // googlevideo 不发送 CORS 头，手机端 fetch 会被拦；由 Worker 中转后加 CORS 头返回
+// Content-Disposition：filename 给 ASCII 兜底，filename* 给 UTF-8 原名（RFC 6266 / 5987）
+function contentDisposition(type, name) {
+  const raw = String(name || 'download').replace(/[\r\n"\\]/g, '').slice(0, 120) || 'download';
+  const ascii = raw.replace(/[^\x20-\x7e]/g, '_').replace(/[;%]/g, '_') || 'download';
+  const star = encodeURIComponent(raw).replace(/['()*]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase());
+  return type + '; filename="' + ascii + '"; filename*=UTF-8\'\'' + star;
+}
+
+// /api/dl（preview=true）：只给页面内 <video> 预览，不带 Content-Disposition；/api/ytdl：下载，带 attachment。
+// 两者都转发合法的 Range（拖进度条 / 断点 / 大小探测），上游 206 原样回 206；都支持 HEAD。
 async function handleYtDl(request, preview = false) {
+  const method = request.method;
+  if (method !== 'GET' && method !== 'HEAD') return json({ ok: false, error: '方法不支持' }, 405);
+  const isHead = method === 'HEAD';
   const u = new URL(request.url);
   const mediaUrl = u.searchParams.get('url') || '';
   const filename = (u.searchParams.get('filename') || 'bilibili_video.mp4').replace(/["\r\n]/g, '').slice(0, 80) || 'bilibili_video.mp4';
@@ -564,28 +577,40 @@ async function handleYtDl(request, preview = false) {
   const timer = setTimeout(() => ctrl.abort(), 120000);
   try {
     // 手动跟随跳转，每一跳都重新校验 https + 域名白名单
-    const range = preview && request.headers.get('Range');
+    const range = request.headers.get('Range') || '';
+    const okRange = /^bytes=\d*-\d*(,\s*\d*-\d*)*$/.test(range);
     const resp = await fetchAllowedHops(mediaUrl, {
-      headers: { 'User-Agent': UA_PC, Accept: '*/*', Referer: 'https://www.bilibili.com/', ...(range ? { Range: range } : {}) },
+      method: isHead ? 'HEAD' : 'GET',
+      headers: { 'User-Agent': UA_PC, Accept: '*/*', Referer: 'https://www.bilibili.com/', ...(okRange ? { Range: range } : {}) },
       signal: ctrl.signal,
     }, isBiliMediaHost);
     if (!resp) return json({ ok: false, error: '不支持的下载地址' }, 400);
-    if (!resp.ok || !resp.body)
+    if (resp.status === 416) {
+      const h416 = new Headers({ 'Cache-Control': 'no-store' });
+      const cr = resp.headers.get('content-range');
+      if (cr) h416.set('Content-Range', cr);
+      return new Response(null, { status: 416, headers: h416 });
+    }
+    if (!resp.ok || (!resp.body && !isHead))
       return json({ ok: false, error: '下载失败（HTTP ' + resp.status + '）' }, 502);
     const h = new Headers();
     h.set('Content-Type', resp.headers.get('content-type') || 'application/octet-stream');
     const len = resp.headers.get('content-length');
     if (len) h.set('Content-Length', len);
-    if (preview) {
-      for (const name of ['Accept-Ranges', 'Content-Range']) {
-        const value = resp.headers.get(name);
-        if (value) h.set(name, value);
-      }
-    } else {
-      h.set('Content-Disposition', 'attachment; filename="' + filename + '"');
+    const ar = resp.headers.get('accept-ranges');
+    if (ar) h.set('Accept-Ranges', ar);
+    let status = 200;
+    if (resp.status === 206) {
+      status = 206;
+      const cr = resp.headers.get('content-range');
+      if (cr) h.set('Content-Range', cr);
+      h.set('Accept-Ranges', 'bytes');
     }
+    if (!preview) h.set('Content-Disposition', contentDisposition('attachment', filename));
     h.set('Cache-Control', 'no-store');
-    return new Response(resp.body, { status: preview ? resp.status : 200, headers: h });
+    h.set('X-Content-Type-Options', 'nosniff');
+    if (isHead) { try { if (resp.body) await resp.body.cancel(); } catch {} }
+    return new Response(isHead ? null : resp.body, { status, headers: h });
   } catch (e) {
     return json({ ok: false, error: '下载失败：' + (e.message || '网络错误') }, 502);
   } finally {

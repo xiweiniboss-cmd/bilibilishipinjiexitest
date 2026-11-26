@@ -165,12 +165,14 @@ function jxParseHeaders(h) {
   <div class="card" id="result">
     <div class="title" id="resTitle"></div>
     <video id="preview" controls playsinline preload="metadata" style="display:none"></video>
+    <div class="prevstate" id="prevState" role="status"></div>
     <div id="mediaBox"></div>
     <div id="resList"></div>
     <div class="dlprog" id="dlProg">
       <div class="track"><div class="bar" id="dlProgBar"></div></div>
       <div class="txt" id="dlProgTxt">准备下载</div>
     </div>
+    <div class="dlsent" id="dlSent" style="display:none" role="status">已交给浏览器下载，请在浏览器的下载列表里查看进度。</div>
     <button type="button" class="btn" id="saveBtn" style="display:none" onclick="window.__saveFile()">下载完成，点这里保存</button>
     <div class="hint" id="dlHint" style="display:none">iPhone 会弹出分享菜单，点「存储视频」即可保存到相册；没弹出就点「点这里保存」<br>直链有时效，解析完尽快下载</div>
   </div>
@@ -387,7 +389,70 @@ var deviceId = (function(){
     if (fromTap) hideSaveBtn(); else showSaveBtn(file); // 电脑上直接下载；按钮留作“没反应再点一次”
   }
 
-  function downloadResource(url, filename){
+  // —— 大文件：已知大小超过 BIG_DL 或大小未知，交给浏览器原生下载同源 /api/ytdl（带 attachment），不读进内存 ——
+  // /api/dl 只给预览用（没有 Content-Disposition），下载绝不指向它。
+  var BIG_DL = 100 * 1048576, HUGE_FILE = 500 * 1048576, PREVIEW_TIMEOUT = 20000, PROBE_TIMEOUT = 8000;
+  function fmtSize(b){ return b >= 1073741824 ? (b / 1073741824).toFixed(1) + ' GB' : Math.max(1, Math.round(b / 1048576)) + ' MB'; }
+  function ytdlUrl(url, filename){ return '/api/ytdl?url=' + encodeURIComponent(url) + '&filename=' + encodeURIComponent(filename); }
+  // 经预览代理取 1 字节，从 Content-Range 读总大小；失败返回 null
+  function probeSize(url){
+    var ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    var timer = setTimeout(function(){ if(ctrl) ctrl.abort(); }, PROBE_TIMEOUT);
+    return fetch('/api/dl?url=' + encodeURIComponent(url), { headers: { Range: 'bytes=0-0' }, signal: ctrl ? ctrl.signal : undefined }).then(function(res){
+      var size = null, m = /\/(\d+)\s*$/.exec(res.headers.get('Content-Range') || '');
+      if(res.status === 206 && m) size = Number(m[1]);
+      else if(res.status === 200){ var cl = Number(res.headers.get('Content-Length')); if(cl > 0) size = cl; }
+      try { if(res.body && res.body.cancel) res.body.cancel(); } catch(e){}
+      clearTimeout(timer);
+      return (isFinite(size) && size > 0) ? size : null;
+    }).catch(function(){ clearTimeout(timer); return null; });
+  }
+  function nativeDownload(url, filename){
+    var a = document.createElement('a');
+    a.href = ytdlUrl(url, filename); a.download = filename; a.rel = 'noopener';
+    document.body.appendChild(a); a.click();
+    setTimeout(function(){ document.body.removeChild(a); }, 2000);
+    dlHint.style.display = 'none';
+    $('dlSent').style.display = 'block';
+  }
+  // 预览看门狗：20 秒没拿到元数据、出错、播放中卡住 20 秒，都给出提示和「重新加载预览」
+  var _prevTimer = null;
+  function clearPrevTimer(){ if(_prevTimer){ clearTimeout(_prevTimer); _prevTimer = null; } }
+  function watchPreview(v, src){
+    var st = $('prevState'), failed = false, ready = false;
+    function setState(text, withRetry){
+      st.textContent = text || '';
+      st.className = 'prevstate' + (withRetry ? ' is-err' : '') + (text ? ' show' : '');
+      if(withRetry){
+        var b = document.createElement('button');
+        b.type = 'button'; b.className = 'btn ghost'; b.textContent = '重新加载预览';
+        b.onclick = load;
+        st.appendChild(b);
+      }
+    }
+    function fail(msg){
+      if(failed) return;
+      failed = true; clearPrevTimer();
+      try { v.pause(); v.removeAttribute('src'); v.load(); } catch(e){}
+      setState(msg, true);
+    }
+    function arm(ms, msg){ clearPrevTimer(); _prevTimer = setTimeout(function(){ fail(msg); }, ms); }
+    v.onloadedmetadata = function(){ ready = true; clearPrevTimer(); setState(''); };
+    v.onerror = function(){ if(v.getAttribute('src')) fail('预览加载失败，直链可能已失效。可以点下面重新加载，或直接选清晰度下载。'); };
+    v.onwaiting = v.onstalled = function(){ if(ready && !failed && !v.paused) arm(PREVIEW_TIMEOUT, '播放卡住了，网络可能不稳定。可以点下面重新加载，或直接下载。'); };
+    v.onplaying = v.oncanplay = v.ontimeupdate = v.onseeked = v.onpause = function(){ if(ready && !failed) clearPrevTimer(); };
+    function load(){
+      failed = false; ready = false;
+      setState('预览加载中…', false);
+      arm(PREVIEW_TIMEOUT, '预览加载超时（超过 20 秒没有响应）。可以点下面重新加载，或直接选清晰度下载。');
+      v.src = src; v.load();
+    }
+    load();
+  }
+
+  function downloadResource(url, filename, size){
+    if(size === null || size === undefined || size > BIG_DL){ hideError(); hideSaveBtn(); nativeDownload(url, filename); return; }
+    $('dlSent').style.display = 'none';
     hideError(); hideSaveBtn();
     setParseBtn('正在准备下载…', true);
     resetDlProg();
@@ -425,6 +490,9 @@ var deviceId = (function(){
     mediaBox.innerHTML = '';
     resList.innerHTML = '';
     dlHint.style.display = 'none';
+    clearPrevTimer();
+    $('prevState').className = 'prevstate'; $('prevState').textContent = '';
+    $('dlSent').style.display = 'none';
     var _pv = $('preview'); if (_pv) { _pv.removeAttribute('src'); _pv.style.display = 'none'; }
 
     if (d.cover) {
@@ -441,23 +509,34 @@ var deviceId = (function(){
       var pv = $('preview');
       var firstVid = resources.filter(function(r){ return !/audio|m4a|mp3/i.test(String(r.type || '')); })[0] || resources[0];
       if (firstVid && firstVid.url) {
-        pv.src = '/api/dl?url=' + encodeURIComponent(firstVid.url);
         pv.style.display = 'block';
+        watchPreview(pv, '/api/dl?url=' + encodeURIComponent(firstVid.url));
       } else { pv.removeAttribute('src'); pv.style.display = 'none'; }
       var vids = resources.filter(function(r){ return !/audio|m4a|mp3/i.test(String(r.type || '')); });
       var auds = resources.filter(function(r){ return /audio|m4a|mp3/i.test(String(r.type || '')); });
       var ordered = vids.concat(auds);
+      var probes = [];
       ordered.forEach(function(r, i){
         var wrap = document.createElement('div');
         wrap.className = 'jx-res';
         var btn = document.createElement('button');
         btn.className = 'btn ghost';
         var dur = r.duration ? ' · ' + Math.floor(r.duration / 60) + ':' + String(Math.floor(r.duration % 60)).padStart(2, '0') : '';
-        btn.textContent = resLabel(r, i) + dur;
+        var baseLabel = resLabel(r, i) + dur;
+        btn.textContent = baseLabel;
+        r._size = undefined;
         btn.onclick = function(){
           var ext = /audio|m4a/i.test(String(r.type || '')) ? 'm4a' : 'mp4';
-          downloadResource(r.url, fileName((d.title || 'bilibili') + '_' + i, ext));
+          downloadResource(r.url, fileName((d.title || 'bilibili') + '_' + i, ext), r._size);
         };
+        // 探测大小（经预览代理只取 1 字节），写在按钮上；超过 HUGE_FILE 标警示
+        probes.push(probeSize(r.url).then(function(sz){
+          r._size = sz;
+          if(sz !== null){
+            btn.textContent = baseLabel + ' · ' + (sz > HUGE_FILE ? '⚠ ' : '') + '约 ' + fmtSize(sz);
+          }
+          return sz;
+        }));
         var copyBtn = document.createElement('button');
         copyBtn.className = 'btn ghost';
         copyBtn.textContent = '复制直链';
@@ -475,7 +554,16 @@ var deviceId = (function(){
       tip.className = 'hint';
       tip.textContent = '共 ' + ordered.length + ' 个版本，选择清晰度下载';
       resList.appendChild(tip);
-      dlHint.style.display = 'block';
+      dlHint.style.display = 'none';
+      // iPhone 分享提示只对读进内存的小文件有用：探测完至少有一个 ≤ BIG_DL 的版本才显示
+      Promise.all(probes).then(function(sizes){
+        var anySmall = sizes.some(function(sz){ return sz !== null && sz <= BIG_DL; });
+        var anyHuge = sizes.some(function(sz){ return sz !== null && sz > HUGE_FILE; });
+        if(anySmall && $('dlSent').style.display === 'none') dlHint.style.display = 'block';
+        tip.textContent = '共 ' + ordered.length + ' 个版本，选择清晰度下载。' +
+          (anyHuge ? '标 ⚠ 的文件异常大，下载会很慢、很占流量。' : '') +
+          '超过 100 MB 或大小未知的版本会直接交给浏览器下载。';
+      });
     } else {
       showError('解析成功但未找到可下载的媒体文件。');
     }
